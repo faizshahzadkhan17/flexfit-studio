@@ -74,6 +74,38 @@ schedule page to show "✓ N checked in" per class — does an inner join from `
 `bookings` on `bookingId`, which silently excludes any row with a null `bookingId`. Net
 effect: corporate member check-ins happen and are recorded, but never counted on that card.
 
+### Issue 7 — `/schedule` (and the reschedule modal) never finish loading in a real browser
+Found by Playwright, not by source reading or curl — this is exactly the kind of bug a
+characterization test suite is supposed to catch. `src/app/schedule/page.tsx:9-11` calls:
+```ts
+const { data: classes, isLoading } = trpc.classes.list.useQuery({
+  from: new Date().toISOString(),
+});
+```
+`new Date().toISOString()` is evaluated fresh on every render, so the query's input — and
+therefore its React Query cache key — is different every single render. Each fetch
+completing triggers a re-render; that re-render computes a new timestamp before the hook
+call returns, so the hook is already looking at a brand-new, never-fetched key by the time
+render output is produced. The component transitions directly from "loading key T1" to
+"loading key T2" to "loading key T3" — the resolved data for any given key is never actually
+part of a rendered frame. **Reproduced live**: the dev server logs showed `classes.list`
+being hit continuously, ~every 40ms, for as long as the page stayed open; the page itself
+never progressed past "Loading schedule..." The identical pattern exists in
+`src/components/reschedule-modal.tsx:30-37`, so the reschedule dialog has the same problem
+while open. The underlying API/business logic is completely correct (proven by both the
+Vitest suite and manual curl testing in Phase 1, neither of which re-renders a component and
+so couldn't have caught this) — this is purely a client-side rendering defect.
+
+Decision (2026-08-13): document-and-leave, consistent with Issues 1–6. The one-line fix
+would be to compute `from` once (e.g. `useState(() => new Date().toISOString())`) instead of
+inline on every render, but per the rules of engagement this isn't touched without an
+explicit "fix it." Because the page cannot be meaningfully interacted with through the UI,
+the Phase 2 e2e specs that need to book a class set the booking up over the API instead of
+clicking through `/schedule`, and a dedicated characterization spec
+(`e2e/schedule-loading-bug.spec.ts`) asserts the current (broken) behavior directly so a
+future accidental fix during refactoring shows up as a test change to review, not a silent
+regression.
+
 ---
 
 ## Authentication & session
@@ -109,7 +141,10 @@ effect: corporate member check-ins happen and are recorded, but never counted on
 - Unauthenticated visitors see the full schedule but every "Book" button is disabled
   client-side (`disabled={!user}`); the server-side `book` mutation independently requires
   login anyway via `protectedProcedure`.
-**Status:** unchanged
+- **The `/schedule` page itself never finishes loading in a real browser — see Issue 7.**
+  The API this section describes is correct and fully covered by the Vitest suite; the page
+  that's supposed to display it is broken by an unrelated client-side rendering bug.
+**Status:** documented-and-left (Issue 7)
 
 ## Member: booking a class
 
@@ -190,7 +225,12 @@ noted but not touched in Phase 1):**
   costs 1 credit (or into a 0-credit class still "costs" whatever was already paid). Flagging
   as an observed edge case, not a bug I'm classifying without your input — it's payment/credit
   adjacent, so I'm not touching it either way without your call.
-**Status:** unchanged, credit-carryover behavior called out above for your awareness
+- The reschedule modal (`src/components/reschedule-modal.tsx`) fetches candidate classes with
+  the identical unmemoized-timestamp pattern as `/schedule` — see Issue 7. While the modal is
+  open it never stops re-fetching, so in a real browser the list of same-name classes to
+  reschedule into may never actually render.
+**Status:** documented-and-left (credit-carryover behavior above for your awareness, plus
+Issue 7 affecting the modal's own class list)
 
 ## Membership plans & subscribing
 
@@ -385,7 +425,20 @@ flow described above, but spends the **company's** shared `creditPoolBalance` in
 personal membership, with a longer 24-hour free-cancellation window (vs. 12 for individual).
 Same waitlist-promotion-on-cancel logic, same FIFO ordering. Not required to have any personal
 membership at all — corporate booking is entirely independent of the `memberships` table.
-**Status:** documented-and-left (Issue 1 — class-cancel doesn't touch corporate bookings/pool at all)
+
+**Correction (2026-08-13, caught while scoping Playwright specs):** this entire router
+(`corporateBookings.book`/`cancel`/`mine`/etc.) has **no UI entry point anywhere in
+`src/app`** — I originally wrote this section as if it were a member-facing feature parallel
+to individual booking, but grepping the app directory for `corporateBookings.` turns up zero
+matches. It's only reachable by calling the tRPC endpoint directly, which is how I originally
+verified it and how the Vitest suite covers it. The admin-facing half (`adminCompanies.*` —
+creating companies, linking members, topping up pools) *does* have a UI, at
+`/admin/companies`; only the member-side booking/cancelling against that pool does not. This
+means, as shipped, corporate credit pools can be funded and members can be linked to them,
+but no member can actually book a class against a company's pool through the app itself.
+Noting as a scope gap alongside the others, not fixing without direction.
+**Status:** documented-and-left (Issue 1 — class-cancel doesn't touch corporate bookings/pool
+at all; plus the no-UI gap noted above)
 
 ---
 
@@ -402,13 +455,19 @@ process I didn't start.
 
 ## Summary
 
-- 6 issues found, documented, and deliberately left unfixed (decision confirmed 2026-08-13).
-  Two (Issues 1 and 4) touch credit/payment state directly and were treated as
-  highest-caution throughout.
+- 7 issues found, documented, and deliberately left unfixed (decision confirmed 2026-08-13
+  for Issues 1–6, and again on 2026-08-13 for Issue 7 once Playwright surfaced it). Two
+  (Issues 1 and 4) touch credit/payment state directly and were treated as highest-caution
+  throughout.
+- Issue 7 was found *during* Phase 2, not Phase 1 — source reading and curl-based API testing
+  both looked correct, because the bug only exists in the client's re-render behavior, which
+  neither method exercises. It's the clearest evidence in this project that "read the code"
+  and "run it in a real browser" catch genuinely different classes of bugs.
 - Everything else observed behaves consistently with what the code says it should do; edge
   cases for errors, permissions, and state transitions were spot-checked live for the
   highest-risk flows (booking, waitlist promotion, class cancellation, payment refund) and
   matched source reading exactly except where an issue is called out above.
-- Phase 2's characterization tests will encode today's actual behavior, including all six
-  issues as-is, so the refactor has one stable, unambiguous baseline to protect. None of
-  these six will be touched without a separate, explicit decision after the refactor lands.
+- Phase 2's characterization tests (Vitest for business logic, Playwright for UI flows)
+  encode today's actual behavior, including all seven issues as-is, so the refactor has one
+  stable, unambiguous baseline to protect. None of these seven will be touched without a
+  separate, explicit decision after the refactor lands.
