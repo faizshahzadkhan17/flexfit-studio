@@ -1,0 +1,6 @@
+# AI Usage Log
+
+Format: date — what was asked — what the AI did — outcome (accepted as-is / modified / rejected).
+
+- 2026-08-13 — User asked to restructure the codebase without changing behavior, following a 4-phase discover-test-refactor-document process; provided GitHub remote and authorized push-as-we-go. — Ran `git init`, added `origin` pointing at the provided repo, fetched, confirmed local working tree was byte-identical to `origin/main` (8 existing commits, clean diff), set `main` to track `origin/main`. Created this log file. — Accepted as-is.
+- 2026-08-13 — Phase 1 (discover): read schema.ts, all 12 tRPC routers, and all 15 pages/components end-to-end; ran the app locally (install, db:push, db:seed, dev) and exercised booking/waitlist/cancel/refund/admin-class-cancel flows live via direct tRPC calls as admin and two members to verify source-derived behavior against runtime. — Wrote documents/FEATURE_INVENTORY.md covering every feature with actor/inputs/outputs/edge cases, and flagged 6 issues (2 touching credit/payment state) without fixing any of them, per the "flag, don't silently fix" rule. — Awaiting user review before Phase 2.
