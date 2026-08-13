@@ -7,7 +7,7 @@ import {
   classes,
   memberships,
 } from "@/db/schema";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure } from "@/server/trpc";
 
 /**
  * Members may reschedule free of charge up to this many hours before the

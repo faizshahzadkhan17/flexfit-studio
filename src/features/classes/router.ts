@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { classes, bookings, users } from "@/db/schema";
-import { router, publicProcedure, staffProcedure, adminProcedure } from "../trpc";
+import { router, publicProcedure, staffProcedure, adminProcedure } from "@/server/trpc";
 
 export const classesRouter = router({
   list: publicProcedure

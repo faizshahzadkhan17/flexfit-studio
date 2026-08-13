@@ -9,7 +9,7 @@ import {
   checkins,
   users,
 } from "@/db/schema";
-import { router, protectedProcedure, staffProcedure } from "../trpc";
+import { router, protectedProcedure, staffProcedure } from "@/server/trpc";
 
 /**
  * Corporate members may cancel free of charge up to this many hours before

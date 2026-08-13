@@ -10,7 +10,7 @@ import {
   publicProcedure,
   protectedProcedure,
   SESSION_COOKIE,
-} from "../trpc";
+} from "@/server/trpc";
 
 const SESSION_DAYS = 30;
 

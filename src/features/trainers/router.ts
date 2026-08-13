@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and, gte } from "drizzle-orm";
 import { classes, users, trainerAvailability } from "@/db/schema";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure } from "@/server/trpc";
 
 export const trainersRouter = router({
   upcomingClasses: protectedProcedure.query(async ({ ctx }) => {

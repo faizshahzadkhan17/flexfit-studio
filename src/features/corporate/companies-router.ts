@@ -8,7 +8,7 @@ import {
   corporateBookings,
   classes,
 } from "@/db/schema";
-import { router, adminProcedure } from "../trpc";
+import { router, adminProcedure } from "@/server/trpc";
 
 export const adminCompaniesRouter = router({
   list: adminProcedure.query(async ({ ctx }) => {

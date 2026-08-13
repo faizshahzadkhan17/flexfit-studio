@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, eq, desc, not, sql } from "drizzle-orm";
 import { notifications, users } from "@/db/schema";
-import { router, protectedProcedure, adminProcedure } from "../trpc";
+import { router, protectedProcedure, adminProcedure } from "@/server/trpc";
 
 export const notificationsRouter = router({
   unreadCount: protectedProcedure.query(async ({ ctx }) => {

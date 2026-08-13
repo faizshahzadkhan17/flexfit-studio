@@ -1,16 +1,16 @@
-import { router } from "../trpc";
-import { authRouter } from "./auth";
-import { membersRouter } from "./members";
-import { plansRouter } from "./plans";
-import { classesRouter } from "./classes";
-import { bookingsRouter } from "./bookings";
-import { paymentsRouter } from "./payments";
-import { adminRouter } from "./admin";
-import { notificationsRouter } from "./notifications";
-import { trainersRouter } from "./trainers";
-import { corporateBookingsRouter } from "./corporate-bookings";
-import { adminCompaniesRouter } from "./admin-companies";
-import { reschedulesRouter } from "./reschedules";
+import { router } from "@/server/trpc";
+import { authRouter } from "@/features/auth/router";
+import { membersRouter } from "@/features/members/router";
+import { plansRouter } from "@/features/memberships/router";
+import { classesRouter } from "@/features/classes/router";
+import { bookingsRouter } from "@/features/bookings/router";
+import { paymentsRouter } from "@/features/payments/router";
+import { adminRouter } from "@/features/reports/router";
+import { notificationsRouter } from "@/features/notifications/router";
+import { trainersRouter } from "@/features/trainers/router";
+import { corporateBookingsRouter } from "@/features/corporate/bookings-router";
+import { adminCompaniesRouter } from "@/features/corporate/companies-router";
+import { reschedulesRouter } from "@/features/bookings/reschedule-router";
 
 export const appRouter = router({
   auth: authRouter,

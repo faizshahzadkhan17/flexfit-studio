@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { users, memberships, membershipPlans, bookings } from "@/db/schema";
-import { router, protectedProcedure, staffProcedure, adminProcedure } from "../trpc";
+import { router, protectedProcedure, staffProcedure, adminProcedure } from "@/server/trpc";
 
 export const membersRouter = router({
   profile: protectedProcedure.query(async ({ ctx }) => {

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { membershipPlans, memberships, payments } from "@/db/schema";
-import { router, publicProcedure, protectedProcedure, adminProcedure } from "../trpc";
+import { router, publicProcedure, protectedProcedure, adminProcedure } from "@/server/trpc";
 
 function addDays(dateIso: string, days: number): string {
   const d = new Date(dateIso);

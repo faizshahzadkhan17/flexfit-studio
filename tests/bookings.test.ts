@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { memberships, bookings } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { UNLIMITED_CREDITS } from "@/server/routers/bookings";
+import { UNLIMITED_CREDITS } from "@/features/bookings/router";
 import { callerAs } from "./helpers/caller";
 import {
   resetDb,

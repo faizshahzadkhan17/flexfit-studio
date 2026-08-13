@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { bookings, classes, memberships, checkins, users } from "@/db/schema";
-import { router, protectedProcedure, staffProcedure } from "../trpc";
+import { router, protectedProcedure, staffProcedure } from "@/server/trpc";
 
 /**
  * Members may cancel free of charge up to this many hours before the class
