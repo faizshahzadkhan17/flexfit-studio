@@ -44,6 +44,8 @@ Every seeded member uses `member123`. The other member emails are in `src/db/see
 | `pnpm db:push`  | Apply the schema in `src/db/schema.ts`             |
 | `pnpm db:seed`  | Wipe the data and reseed                           |
 | `pnpm db:reset` | Delete the database file, then push and seed again |
+| `pnpm test`     | Vitest — business logic, against its own seeded DB |
+| `pnpm test:e2e` | Playwright — end-to-end flows, against its own dev server |
 
 `db:reset` is the one you want when the data gets into a state you don't like. It's destructive and it's meant to be.
 
@@ -57,10 +59,15 @@ If you're changing anything in `src/db/schema.ts`, run `pnpm db:push` afterwards
 
 ```
 src/
-  app/          routes and pages
-  components/   shared components
+  app/          routes and pages (Next.js App Router — folder structure here is the URLs)
+  components/   shared, cross-page UI (e.g. NavBar)
   db/           schema, client, seed data
-  lib/          helpers
-  server/       tRPC routers
-documents/      empty, for your own notes
+  lib/          generic helpers (formatting, password hashing, date math, tRPC client)
+  features/     one folder per domain — each holds its tRPC router(s) plus any
+                logic specific to that domain (e.g. features/bookings/shared.ts)
+  server/       trpc.ts (context + procedure builders) and routers/_app.ts
+                (combines every feature router into the app-wide API)
+documents/      FEATURE_INVENTORY.md, DECISIONS.md, and other project notes
+tests/          Vitest — business logic, against a real seeded SQLite file
+e2e/            Playwright — end-to-end flows, against a dedicated seeded dev server
 ```
