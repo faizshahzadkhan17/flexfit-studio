@@ -15,11 +15,15 @@ Key business constants (from source, not guessed):
 
 ---
 
-## ⚠️ Known issues found — awaiting your decision
+## ⚠️ Known issues found — documented and left (2026-08-13)
 
-Per the rules of engagement, these are flagged, not fixed. Each needs a "fix it" or
-"document and leave it" call from you before Phase 3 touches anything nearby. All were
-confirmed by reproducing them against the live app, not just read from source.
+Per the rules of engagement, these were flagged rather than fixed. Decision (2026-08-13):
+document all six, fix none during the refactor. Rationale: Phase 2's characterization tests
+need a single stable baseline — today's actual behavior, bugs included — so a bug fix
+mid-project wouldn't cause a false "regression" signal during Phase 3. Any fixes will be
+revisited afterward as a separate, isolated, individually-tested change, not bundled into
+the restructuring work. All six were confirmed by reproducing them against the live app,
+not just read from source.
 
 ### Issue 1 — Cancelling a class does not refund credits (member or corporate)
 `classes.cancel` (admin-only, `classes.ts:132`) sets the class `cancelled` flag and bulk-cancels
@@ -149,7 +153,7 @@ effect: corporate member check-ins happen and are recorded, but never counted on
   "free" if they were short; documented under Issue-adjacent behavior, not flagged as a bug
   since it's clamped safely, just worth knowing).
 - No notification is sent to the promoted member (see Issue 3).
-**Status:** unchanged, except Issue 3's absence of a promotion notification (see above)
+**Status:** documented-and-left (Issue 3 — no promotion notification)
 
 ## Member: waitlist page
 
@@ -160,7 +164,7 @@ counting other waitlisted bookings for the same class with an earlier `bookedAt`
 **Edge cases observed:** leaving the waitlist reuses the same `bookings.cancel` mutation, so
 all its edge cases apply. A class that gets cancelled by an admin while a member is
 waitlisted still appears here indefinitely (Issue 2).
-**Status:** unchanged, except Issue 2
+**Status:** documented-and-left (Issue 2)
 
 ## Member: rescheduling a booking
 
@@ -230,7 +234,7 @@ start booking classes." instead of erroring. Credits display as "Unlimited" when
   `markPaid` on an already-`paid` payment is allowed and is a no-op status-wise (sets `paid` →
   `paid`) — harmless but slightly redundant; not flagging as a bug.
 - Refund's interaction with existing bookings/credits is Issue 4 above.
-**Status:** unchanged, except Issue 4
+**Status:** documented-and-left (Issue 4 — payment/credit logic, left untouched deliberately)
 
 ## Front desk / kiosk check-in
 
@@ -270,8 +274,31 @@ class), weekly availability grid
   UTC this produces incorrect availability/conflict results. Not exercised by any current page,
   but noting it since it's a latent bug if that procedure is ever wired into the UI.
 - Per-class check-in counts undercount corporate attendees (Issue 6).
-**Status:** unchanged, latent UTC issue in `checkAvailability` noted for awareness since it's
-currently unreachable from the UI
+**Status:** documented-and-left (Issue 6, plus a latent UTC bug in `checkAvailability` noted
+for awareness since it's currently unreachable from the UI)
+
+## Admin/staff: class scheduling (create, update, cancel)
+
+**Actor:** staff (admin or trainer) can create/update classes; only admin can cancel
+**Inputs:** create — name, room, capacity, `startsAt`, optional description/trainerId,
+optional durationMin/creditCost (default 60min/1 credit); update — `id` + any subset of
+name/room/capacity/startsAt/trainerId; cancel — `id`
+**Outputs:** created/updated class row; cancel returns the updated class row (bookings/credits
+side effects are separate — see Issues 1 and 2)
+**Edge cases observed (live-tested via a throwaway "QA Test Class", capacity 1):**
+- `create` has no check preventing a past `startsAt`, an already-double-booked room/time, or
+  a trainer double-booking (the `checkAvailability` conflict-checker exists but nothing calls
+  it from this mutation) — a class can be created that immediately overlaps another. Not
+  flagging as a bug to fix now (documented per the decision above), just noting the gap.
+- `update` on a nonexistent `id` → 404 NOT_FOUND "Class not found." No validation stops
+  shrinking `capacity` below the current number of confirmed bookings — existing `booked`
+  rows aren't retroactively bumped to waitlisted if that happens.
+- `cancel` on a nonexistent `id` → 404. Cancelling an already-cancelled class succeeds again
+  as a no-op-ish update (still flips already-`true` `cancelled` to `true`, still re-runs the
+  booking-cancellation bulk update, which is harmless the second time since there are no
+  `booked` rows left to touch).
+- The credit/waitlist/corporate-booking side effects of `cancel` are Issues 1 and 2 above.
+**Status:** documented-and-left (Issues 1 and 2 apply to `cancel`)
 
 ## Admin: dashboard stats
 
@@ -304,7 +331,7 @@ a membership expiring exactly today still shows. No issues found.
 no-show list
 **Edge cases observed:** see Issue 5 — the no-show panel is unreachable via any live user
 action, only ever populated by seed data.
-**Status:** unchanged, except Issue 5
+**Status:** documented-and-left (Issue 5)
 
 ## Admin: member management
 
@@ -358,7 +385,7 @@ flow described above, but spends the **company's** shared `creditPoolBalance` in
 personal membership, with a longer 24-hour free-cancellation window (vs. 12 for individual).
 Same waitlist-promotion-on-cancel logic, same FIFO ordering. Not required to have any personal
 membership at all — corporate booking is entirely independent of the `memberships` table.
-**Status:** unchanged, subject to Issue 1 (class-cancel doesn't touch corporate bookings/pool at all)
+**Status:** documented-and-left (Issue 1 — class-cancel doesn't touch corporate bookings/pool at all)
 
 ---
 
@@ -375,10 +402,13 @@ process I didn't start.
 
 ## Summary
 
-- 6 issues found and flagged above, none fixed. Two (Issues 1 and 4) touch credit/payment
-  state directly — per your rules, I'm treating those as highest-caution and won't act on
-  either without an explicit "fix it" from you.
+- 6 issues found, documented, and deliberately left unfixed (decision confirmed 2026-08-13).
+  Two (Issues 1 and 4) touch credit/payment state directly and were treated as
+  highest-caution throughout.
 - Everything else observed behaves consistently with what the code says it should do; edge
   cases for errors, permissions, and state transitions were spot-checked live for the
   highest-risk flows (booking, waitlist promotion, class cancellation, payment refund) and
   matched source reading exactly except where an issue is called out above.
+- Phase 2's characterization tests will encode today's actual behavior, including all six
+  issues as-is, so the refactor has one stable, unambiguous baseline to protect. None of
+  these six will be touched without a separate, explicit decision after the refactor lands.
