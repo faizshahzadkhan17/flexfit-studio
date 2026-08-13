@@ -1,13 +1,16 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import type { TRPC_ERROR_CODE_KEY } from "@trpc/server/rpc";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   reschedules,
   bookings,
   classes,
   memberships,
+  type Booking,
+  type GymClass,
 } from "@/db/schema";
-import { router, protectedProcedure } from "@/server/trpc";
+import { router, protectedProcedure, type Context } from "@/server/trpc";
 import { hoursUntil } from "@/lib/time";
 
 /**
@@ -15,6 +18,115 @@ import { hoursUntil } from "@/lib/time";
  * original class starts. This is more generous than cancellation policy.
  */
 export const FREE_RESCHEDULE_HOURS = 4;
+
+type RescheduleCheck =
+  | { valid: false; code: TRPC_ERROR_CODE_KEY; reason: string }
+  | {
+      valid: true;
+      originalBooking: Booking;
+      originalClass: GymClass;
+      targetClass: GymClass;
+      targetIsFull: boolean;
+    };
+
+/**
+ * Every rule a reschedule must satisfy, shared between the `reschedule`
+ * mutation and its `validateReschedule` read-only preview. Callers decide
+ * what to do with a failure (throw vs. return a reason) and what to do on
+ * success (write vs. just report `targetIsFull`).
+ */
+async function checkReschedule(
+  db: Context["db"],
+  userId: number,
+  fromBookingId: number,
+  toClassId: number,
+): Promise<RescheduleCheck> {
+  const originalRow = await db
+    .select({ booking: bookings, cls: classes })
+    .from(bookings)
+    .innerJoin(classes, eq(bookings.classId, classes.id))
+    .where(eq(bookings.id, fromBookingId))
+    .get();
+
+  if (!originalRow) {
+    return { valid: false, code: "NOT_FOUND", reason: "Booking not found." };
+  }
+
+  const originalBooking = originalRow.booking;
+  const originalClass = originalRow.cls;
+
+  if (originalBooking.userId !== userId) {
+    return { valid: false, code: "FORBIDDEN", reason: "You cannot reschedule this booking." };
+  }
+
+  if (originalBooking.status !== "booked" && originalBooking.status !== "waitlisted") {
+    return { valid: false, code: "BAD_REQUEST", reason: "This booking is no longer active." };
+  }
+
+  const hoursBeforeOriginal = hoursUntil(originalClass.startsAt);
+  if (hoursBeforeOriginal < FREE_RESCHEDULE_HOURS) {
+    return {
+      valid: false,
+      code: "BAD_REQUEST",
+      reason: `You can only reschedule up to ${FREE_RESCHEDULE_HOURS} hours before the class starts.`,
+    };
+  }
+
+  const targetClass = await db.select().from(classes).where(eq(classes.id, toClassId)).get();
+
+  if (!targetClass) {
+    return { valid: false, code: "NOT_FOUND", reason: "Target class not found." };
+  }
+
+  if (targetClass.name !== originalClass.name) {
+    return {
+      valid: false,
+      code: "BAD_REQUEST",
+      reason: "You can only reschedule to a class with the same name.",
+    };
+  }
+
+  if (targetClass.id === originalClass.id) {
+    return { valid: false, code: "BAD_REQUEST", reason: "You are already booked for this class." };
+  }
+
+  if (hoursUntil(targetClass.startsAt) <= 0) {
+    return { valid: false, code: "BAD_REQUEST", reason: "This class has already started." };
+  }
+
+  if (targetClass.cancelled) {
+    return { valid: false, code: "BAD_REQUEST", reason: "This class has been cancelled." };
+  }
+
+  const existingBooking = await db
+    .select()
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.classId, targetClass.id),
+        eq(bookings.userId, userId),
+        sql`${bookings.status} in ('booked', 'waitlisted')`,
+      ),
+    )
+    .get();
+
+  if (existingBooking) {
+    return {
+      valid: false,
+      code: "CONFLICT",
+      reason: "You already have an active booking for this class.",
+    };
+  }
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(bookings)
+    .where(and(eq(bookings.classId, targetClass.id), eq(bookings.status, "booked")));
+
+  const targetIsFull = Number(count) >= targetClass.capacity;
+
+  return { valid: true, originalBooking, originalClass, targetClass, targetIsFull };
+}
 
 export const reschedulesRouter = router({
   reschedule: protectedProcedure
@@ -25,136 +137,11 @@ export const reschedulesRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      // Get the original booking with its class details
-      const originalRow = await ctx.db
-        .select({
-          booking: bookings,
-          cls: classes,
-        })
-        .from(bookings)
-        .innerJoin(classes, eq(bookings.classId, classes.id))
-        .where(eq(bookings.id, input.fromBookingId))
-        .get();
-
-      if (!originalRow) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Booking not found.",
-        });
+      const check = await checkReschedule(ctx.db, ctx.user.id, input.fromBookingId, input.toClassId);
+      if (!check.valid) {
+        throw new TRPCError({ code: check.code, message: check.reason });
       }
-
-      const originalBooking = originalRow.booking;
-      const originalClass = originalRow.cls;
-
-      // Verify ownership
-      if (originalBooking.userId !== ctx.user.id) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You cannot reschedule this booking.",
-        });
-      }
-
-      // Verify booking is still active
-      if (originalBooking.status !== "booked" && originalBooking.status !== "waitlisted") {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "This booking is no longer active.",
-        });
-      }
-
-      // Verify reschedule is allowed (within 4 hours of original class)
-      const hoursBeforeOriginal = hoursUntil(originalClass.startsAt);
-      if (hoursBeforeOriginal < FREE_RESCHEDULE_HOURS) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `You can only reschedule up to ${FREE_RESCHEDULE_HOURS} hours before the class starts.`,
-        });
-      }
-
-      // Get target class
-      const targetClass = await ctx.db
-        .select()
-        .from(classes)
-        .where(eq(classes.id, input.toClassId))
-        .get();
-
-      if (!targetClass) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Target class not found.",
-        });
-      }
-
-      // Verify target class has the same name
-      if (targetClass.name !== originalClass.name) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "You can only reschedule to a class with the same name.",
-        });
-      }
-
-      // Verify target class is not the same class
-      if (targetClass.id === originalClass.id) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "You are already booked for this class.",
-        });
-      }
-
-      // Verify target class hasn't started
-      if (hoursUntil(targetClass.startsAt) <= 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "This class has already started.",
-        });
-      }
-
-      // Verify target class is not cancelled
-      if (targetClass.cancelled) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "This class has been cancelled.",
-        });
-      }
-
-      // Check if user already has an active booking for this class
-      const existingBooking = await ctx.db
-        .select()
-        .from(bookings)
-        .where(
-          and(
-            eq(bookings.classId, targetClass.id),
-            eq(bookings.userId, ctx.user.id),
-            sql`${bookings.status} in ('booked', 'waitlisted')`,
-          ),
-        )
-        .get();
-
-      if (existingBooking) {
-        throw new TRPCError({
-          code: "CONFLICT",
-          message: "You already have an active booking for this class.",
-        });
-      }
-
-      // Check if target class is full
-      const [{ count }] = await ctx.db
-        .select({ count: sql<number>`count(*)` })
-        .from(bookings)
-        .where(
-          and(eq(bookings.classId, targetClass.id), eq(bookings.status, "booked")),
-        );
-
-      const targetIsFull = Number(count) >= targetClass.capacity;
-
-      // Get the membership to check for unlimited credits
-      const membership = originalBooking.membershipId
-        ? await ctx.db
-            .select()
-            .from(memberships)
-            .where(eq(memberships.id, originalBooking.membershipId))
-            .get()
-        : null;
+      const { originalBooking, originalClass, targetClass, targetIsFull } = check;
 
       // Create the new booking (don't charge credits, they keep what they spent)
       const newBooking = await ctx.db
@@ -235,125 +222,10 @@ export const reschedulesRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      // Get the original booking with its class details
-      const originalRow = await ctx.db
-        .select({
-          booking: bookings,
-          cls: classes,
-        })
-        .from(bookings)
-        .innerJoin(classes, eq(bookings.classId, classes.id))
-        .where(eq(bookings.id, input.fromBookingId))
-        .get();
-
-      if (!originalRow) {
-        return { valid: false, reason: "Booking not found." };
+      const check = await checkReschedule(ctx.db, ctx.user.id, input.fromBookingId, input.toClassId);
+      if (!check.valid) {
+        return { valid: false, reason: check.reason };
       }
-
-      const originalBooking = originalRow.booking;
-      const originalClass = originalRow.cls;
-
-      // Verify ownership
-      if (originalBooking.userId !== ctx.user.id) {
-        return { valid: false, reason: "You cannot reschedule this booking." };
-      }
-
-      // Verify booking is still active
-      if (
-        originalBooking.status !== "booked" &&
-        originalBooking.status !== "waitlisted"
-      ) {
-        return {
-          valid: false,
-          reason: "This booking is no longer active.",
-        };
-      }
-
-      // Verify reschedule is allowed (within 4 hours of original class)
-      const hoursBeforeOriginal = hoursUntil(originalClass.startsAt);
-      if (hoursBeforeOriginal < FREE_RESCHEDULE_HOURS) {
-        return {
-          valid: false,
-          reason: `You can only reschedule up to ${FREE_RESCHEDULE_HOURS} hours before the class starts.`,
-        };
-      }
-
-      // Get target class
-      const targetClass = await ctx.db
-        .select()
-        .from(classes)
-        .where(eq(classes.id, input.toClassId))
-        .get();
-
-      if (!targetClass) {
-        return { valid: false, reason: "Target class not found." };
-      }
-
-      // Verify target class has the same name
-      if (targetClass.name !== originalClass.name) {
-        return {
-          valid: false,
-          reason: "You can only reschedule to a class with the same name.",
-        };
-      }
-
-      // Verify target class is not the same class
-      if (targetClass.id === originalClass.id) {
-        return {
-          valid: false,
-          reason: "You are already booked for this class.",
-        };
-      }
-
-      // Verify target class hasn't started
-      if (hoursUntil(targetClass.startsAt) <= 0) {
-        return {
-          valid: false,
-          reason: "This class has already started.",
-        };
-      }
-
-      // Verify target class is not cancelled
-      if (targetClass.cancelled) {
-        return {
-          valid: false,
-          reason: "This class has been cancelled.",
-        };
-      }
-
-      // Check if user already has an active booking for this class
-      const existingBooking = await ctx.db
-        .select()
-        .from(bookings)
-        .where(
-          and(
-            eq(bookings.classId, targetClass.id),
-            eq(bookings.userId, ctx.user.id),
-            sql`${bookings.status} in ('booked', 'waitlisted')`,
-          ),
-        )
-        .get();
-
-      if (existingBooking) {
-        return {
-          valid: false,
-          reason: "You already have an active booking for this class.",
-        };
-      }
-
-      // Check if target class is full
-      const [{ count }] = await ctx.db
-        .select({ count: sql<number>`count(*)` })
-        .from(bookings)
-        .where(
-          and(eq(bookings.classId, targetClass.id), eq(bookings.status, "booked")),
-        );
-
-      const targetIsFull = Number(count) >= targetClass.capacity;
-
-      return {
-        valid: true,
-        targetIsFull,
-      };
+      return { valid: true, targetIsFull: check.targetIsFull };
     }),
 });
